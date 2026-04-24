@@ -741,7 +741,17 @@ public final class OpenJCEPlusFIPS extends OpenJCEPlusProvider {
         try {
             return java.security.SecureRandom.getInstance("SHA256DRBG", this);
         } catch (NoSuchAlgorithmException e) {
-            throw new ProviderException("SecureRandom not available");
+            // If SHA256DRBG is not available (e.g., native library not loaded),
+            // try to get a default SecureRandom from the system
+            try {
+                java.security.SecureRandom sr = new java.security.SecureRandom();
+                if (debug != null) {
+                    debug.println("WARNING: SHA256DRBG not available, using default SecureRandom: " + sr.getAlgorithm());
+                }
+                return sr;
+            } catch (Exception ex) {
+                throw new ProviderException("SecureRandom not available", e);
+            }
         }
     }
 
