@@ -27,6 +27,7 @@ OBJS= \
 	OpenSSLCCM.obj \
 	OpenSSLKeyWrap.obj \
 	OpenSSLDigest.obj \
+	OpenSSLSignature.obj \
 	OpenSSLHMAC.obj \
 	OpenSSLPBKDF2.obj \
 	OpenSSLHKDF.obj \
@@ -78,6 +79,9 @@ OpenSSLKeyWrap.obj : openssl\OpenSSLKeyWrap.c openssl\OpenSSLHelpers.h
                 		
 OpenSSLDigest.obj : openssl\OpenSSLDigest.c openssl\OpenSSLHelpers.h
 	cl $(DEBUG_FLAGS) $(CFLAGS) -c -I"$(OPENSSL_HOME)\include" -I"$(JAVA_HOME)\include" -I"$(JAVA_HOME)\include\win32" -I..\include -Iopenssl openssl\OpenSSLDigest.c
+
+OpenSSLSignature.obj : openssl\OpenSSLSignature.c openssl\OpenSSLSignature.h openssl\OpenSSLHelpers.h
+	cl $(DEBUG_FLAGS) $(CFLAGS) -c -I"$(OPENSSL_HOME)\include" -I"$(JAVA_HOME)\include" -I"$(JAVA_HOME)\include\win32" -I..\include -Iopenssl openssl\OpenSSLSignature.c
 
 OpenSSLHMAC.obj : openssl\OpenSSLHMAC.c openssl\OpenSSLHelpers.h
 	cl $(DEBUG_FLAGS) $(CFLAGS) -c -I"$(OPENSSL_HOME)\include" -I"$(JAVA_HOME)\include" -I"$(JAVA_HOME)\include\win32" -I..\include -Iopenssl openssl\OpenSSLHMAC.c

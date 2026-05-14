@@ -140,6 +140,43 @@
 /** @} */  // end of KDF_Errors
 
 /**
+ * @defgroup Signature_Errors Signature-Specific Error Codes
+ * @{
+ */
+
+/** Signature context is NULL */
+#define OPENSSL_SIGNATURE_NULL 0x00000022
+
+/** Signature context is invalid or corrupted */
+#define OPENSSL_SIGNATURE_INVALID 0x00000023
+
+/** Failed to load signature key */
+#define OPENSSL_SIGNATURE_KEY_LOAD_FAILED 0x00000024
+
+/** Requested signature algorithm not found */
+#define OPENSSL_SIGNATURE_ALGORITHM_NOT_FOUND 0x00000025
+
+/** Failed to create new signature context */
+#define OPENSSL_SIGNATURE_CTX_NEW_FAILED 0x00000026
+
+/** Failed to initialize signature operation */
+#define OPENSSL_SIGNATURE_INIT_FAILED 0x00000027
+
+/** Failed to update signature with data */
+#define OPENSSL_SIGNATURE_UPDATE_FAILED 0x00000028
+
+/** Failed to finalize signature operation */
+#define OPENSSL_SIGNATURE_SIGN_FAILED 0x00000029
+
+/** Failed to verify signature */
+#define OPENSSL_SIGNATURE_VERIFY_FAILED 0x0000002A
+
+/** Failed to set PSS parameters */
+#define OPENSSL_SIGNATURE_PSS_PARAM_FAILED 0x0000002B
+
+/** @} */  // end of Signature_Errors
+
+/**
  * @defgroup Context_Errors Context and Parameter Error Codes
  * @{
  */

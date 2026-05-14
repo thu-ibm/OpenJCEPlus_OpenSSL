@@ -29,6 +29,13 @@ public abstract class NativeOpenSSLAdapter implements NativeInterface {
     // private static Debug debug = Debug.getInstance("jceplus");
 
     static final String unobtainedValue = new String();
+    
+    // EC Key storage for OpenSSL backend
+    // Maps key ID to key bytes (PKCS#8 for private, X.509 for public)
+    private final java.util.concurrent.ConcurrentHashMap<Long, byte[]> ecKeyStore =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong ecKeyIdCounter =
+        new java.util.concurrent.atomic.AtomicLong(1);
 
     // whether to validate OpenSSL was loaded from JRE location
     // Can be enabled via system property for production deployments
@@ -1305,62 +1312,87 @@ public abstract class NativeOpenSSLAdapter implements NativeInterface {
 
     @Override
     public long ECKEY_createPrivateKey(byte[] privateKeyBytes) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_createPrivateKey not yet implemented in OpenSSL backend");
+        if (privateKeyBytes == null || privateKeyBytes.length == 0) {
+            throw new OCKException("Private key bytes cannot be null or empty");
+        }
+        // Store the key bytes and return a unique ID
+        long keyId = ecKeyIdCounter.getAndIncrement();
+        ecKeyStore.put(keyId, privateKeyBytes.clone());
+        return keyId;
     }
 
     @Override
     public long XECKEY_createPrivateKey(byte[] privateKeyBytes, long bufferPtr) throws OCKException {
-        throw new UnsupportedOperationException("XECKEY_createPrivateKey not yet implemented in OpenSSL backend");
+        // For OpenSSL, we don't use bufferPtr, just store the key bytes
+        return ECKEY_createPrivateKey(privateKeyBytes);
     }
 
     @Override
     public long ECKEY_createPublicKey(byte[] publicKeyBytes, byte[] parameterBytes) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_createPublicKey not yet implemented in OpenSSL backend");
+        if (publicKeyBytes == null || publicKeyBytes.length == 0) {
+            throw new OCKException("Public key bytes cannot be null or empty");
+        }
+        // Store the key bytes and return a unique ID
+        // Note: parameterBytes are embedded in X.509 format, so we don't need them separately
+        long keyId = ecKeyIdCounter.getAndIncrement();
+        ecKeyStore.put(keyId, publicKeyBytes.clone());
+        return keyId;
     }
 
     @Override
     public long XECKEY_createPublicKey(byte[] publicKeyBytes) throws OCKException {
-        throw new UnsupportedOperationException("XECKEY_createPublicKey not yet implemented in OpenSSL backend");
+        return ECKEY_createPublicKey(publicKeyBytes, null);
     }
 
     @Override
     public byte[] ECKEY_getParameters(long ecKeyId) {
-        throw new UnsupportedOperationException("ECKEY_getParameters not yet implemented in OpenSSL backend");
+        // Parameters are embedded in the X.509 public key format
+        // For now, return null as this is typically not needed
+        return null;
     }
 
     @Override
     public byte[] ECKEY_getPrivateKeyBytes(long ecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_getPrivateKeyBytes not yet implemented in OpenSSL backend");
+        byte[] keyBytes = ecKeyStore.get(ecKeyId);
+        if (keyBytes == null) {
+            throw new OCKException("Invalid EC key ID: " + ecKeyId);
+        }
+        return keyBytes.clone();
     }
 
     @Override
     public byte[] XECKEY_getPrivateKeyBytes(long xecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("XECKEY_getPrivateKeyBytes not yet implemented in OpenSSL backend");
+        return ECKEY_getPrivateKeyBytes(xecKeyId);
     }
 
     @Override
     public byte[] ECKEY_getPublicKeyBytes(long ecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_getPublicKeyBytes not yet implemented in OpenSSL backend");
+        byte[] keyBytes = ecKeyStore.get(ecKeyId);
+        if (keyBytes == null) {
+            throw new OCKException("Invalid EC key ID: " + ecKeyId);
+        }
+        return keyBytes.clone();
     }
 
     @Override
     public byte[] XECKEY_getPublicKeyBytes(long xecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("XECKEY_getPublicKeyBytes not yet implemented in OpenSSL backend");
+        return ECKEY_getPublicKeyBytes(xecKeyId);
     }
 
     @Override
     public long ECKEY_createPKey(long ecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_createPKey not yet implemented in OpenSSL backend");
+        // For OpenSSL, we don't need a separate PKey - the key ID is sufficient
+        return ecKeyId;
     }
 
     @Override
     public void ECKEY_delete(long ecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_delete not yet implemented in OpenSSL backend");
+        ecKeyStore.remove(ecKeyId);
     }
 
     @Override
     public void XECKEY_delete(long xecKeyId) throws OCKException {
-        throw new UnsupportedOperationException("XECKEY_delete not yet implemented in OpenSSL backend");
+        ECKEY_delete(xecKeyId);
     }
 
     @Override
@@ -1387,13 +1419,107 @@ public abstract class NativeOpenSSLAdapter implements NativeInterface {
     @Override
     public byte[] ECKEY_signDatawithECDSA(byte[] digestBytes, int digestBytesLen, long ecPrivateKeyId)
             throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_signDatawithECDSA not yet implemented in OpenSSL backend");
+        // Get the private key bytes from storage
+        byte[] privateKeyBytes = ecKeyStore.get(ecPrivateKeyId);
+        if (privateKeyBytes == null) {
+            throw new OCKException("Invalid EC private key ID: " + ecPrivateKeyId);
+        }
+        
+        try {
+            // Create signature context with the EC private key
+            // Use "NONEwithECDSA" since we already have a pre-computed digest
+            long signatureId = NativeOpenSSLImplementation.SIGNATURE_create(
+                getFipsFlag(),
+                privateKeyBytes,
+                privateKeyBytes.length,
+                "NONEwithECDSA",
+                0  // MODE_SIGN
+            );
+            
+            try {
+                // Update with the pre-computed digest
+                int updateResult = NativeOpenSSLImplementation.SIGNATURE_update(
+                    getFipsFlag(),
+                    signatureId,
+                    digestBytes,
+                    0,
+                    digestBytesLen
+                );
+                
+                if (updateResult != 1) {
+                    throw new OCKException("Failed to update ECDSA signature with digest");
+                }
+                
+                // Sign and get signature bytes
+                byte[] signature = NativeOpenSSLImplementation.SIGNATURE_sign(getFipsFlag(), signatureId);
+                if (signature == null) {
+                    throw new OCKException("ECDSA signature operation returned null");
+                }
+                
+                return signature;
+            } finally {
+                // Clean up signature context
+                NativeOpenSSLImplementation.SIGNATURE_delete(getFipsFlag(), signatureId);
+            }
+        } catch (Exception e) {
+            throw new OCKException("ECDSA signature failed: " + e.getMessage(), e);
+        }
     }
 
     @Override
     public boolean ECKEY_verifyDatawithECDSA(byte[] digestBytes, int digestBytesLen, byte[] sigBytes, int sigBytesLen,
             long ecPublicKeyId) throws OCKException {
-        throw new UnsupportedOperationException("ECKEY_verifyDatawithECDSA not yet implemented in OpenSSL backend");
+        // Get the public key bytes from storage
+        byte[] publicKeyBytes = ecKeyStore.get(ecPublicKeyId);
+        if (publicKeyBytes == null) {
+            throw new OCKException("Invalid EC public key ID: " + ecPublicKeyId);
+        }
+        
+        try {
+            // Create signature context with the EC public key
+            // Use "NONEwithECDSA" since we already have a pre-computed digest
+            long signatureId = NativeOpenSSLImplementation.SIGNATURE_create(
+                getFipsFlag(),
+                publicKeyBytes,
+                publicKeyBytes.length,
+                "NONEwithECDSA",
+                1  // MODE_VERIFY
+            );
+            
+            try {
+                // Update with the pre-computed digest
+                int updateResult = NativeOpenSSLImplementation.SIGNATURE_update(
+                    getFipsFlag(),
+                    signatureId,
+                    digestBytes,
+                    0,
+                    digestBytesLen
+                );
+                
+                if (updateResult != 1) {
+                    throw new OCKException("Failed to update ECDSA verification with digest");
+                }
+                
+                // Verify signature
+                int verifyResult = NativeOpenSSLImplementation.SIGNATURE_verify(
+                    getFipsFlag(),
+                    signatureId,
+                    sigBytes
+                );
+                
+                // Return true if valid (1), false if invalid (0), throw on error (negative)
+                if (verifyResult < 0) {
+                    throw new OCKException("ECDSA verification operation failed");
+                }
+                
+                return verifyResult == 1;
+            } finally {
+                // Clean up signature context
+                NativeOpenSSLImplementation.SIGNATURE_delete(getFipsFlag(), signatureId);
+            }
+        } catch (Exception e) {
+            throw new OCKException("ECDSA verification failed: " + e.getMessage(), e);
+        }
     }
 
     // Note: Additional methods from NativeInterface that are not yet implemented

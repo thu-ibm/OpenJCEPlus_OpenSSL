@@ -371,6 +371,12 @@ static jmethodID openSSLExceptionConstructorWithCode = NULL;
 void setPendingOpenSSLException(JNIEnv* env, int code, const char* msg) {
     jstring jMsg;
 
+    // Don't throw a second exception if one is already pending
+    // This prevents corrupting the exception state
+    if ((*env)->ExceptionCheck(env)) {
+        return;
+    }
+
     if (openSSLExceptionClass == NULL) {
         openSSLExceptionClass = (*env)->FindClass(
             env, "com/ibm/crypto/plus/provider/openssl/OpenSSLException");

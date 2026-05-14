@@ -19,6 +19,19 @@ public class OpenSSLException extends Exception {
     public static final int OPENSSL_CIPHER_UPDATE_FAILED = 0x0000000A;
     public static final int OPENSSL_CIPHER_FINAL_FAILED = 0x0000000B;
     public static final int OPENSSL_CIPHER_TAG_MISMATCH = 0x0000000E;
+    
+    // Signature error codes
+    public static final int OPENSSL_SIGNATURE_NULL = 0x00000022;
+    public static final int OPENSSL_SIGNATURE_INVALID = 0x00000023;
+    public static final int OPENSSL_SIGNATURE_KEY_LOAD_FAILED = 0x00000024;
+    public static final int OPENSSL_SIGNATURE_ALGORITHM_NOT_FOUND = 0x00000025;
+    public static final int OPENSSL_SIGNATURE_CTX_NEW_FAILED = 0x00000026;
+    public static final int OPENSSL_SIGNATURE_INIT_FAILED = 0x00000027;
+    public static final int OPENSSL_SIGNATURE_UPDATE_FAILED = 0x00000028;
+    public static final int OPENSSL_SIGNATURE_SIGN_FAILED = 0x00000029;
+    public static final int OPENSSL_SIGNATURE_VERIFY_FAILED = 0x0000002A;
+    public static final int OPENSSL_SIGNATURE_PSS_PARAM_FAILED = 0x0000002B;
+    
     public static final int OPENSSL_UNSPECIFIED = 0x80000000;
 
     private int errorCode;
@@ -58,6 +71,26 @@ public class OpenSSLException extends Exception {
                 return "OPENSSL_CIPHER_FINAL_FAILED";
             case OPENSSL_CIPHER_TAG_MISMATCH:
                 return "OPENSSL_CIPHER_TAG_MISMATCH";
+            case OPENSSL_SIGNATURE_NULL:
+                return "OPENSSL_SIGNATURE_NULL";
+            case OPENSSL_SIGNATURE_INVALID:
+                return "OPENSSL_SIGNATURE_INVALID";
+            case OPENSSL_SIGNATURE_KEY_LOAD_FAILED:
+                return "OPENSSL_SIGNATURE_KEY_LOAD_FAILED";
+            case OPENSSL_SIGNATURE_ALGORITHM_NOT_FOUND:
+                return "OPENSSL_SIGNATURE_ALGORITHM_NOT_FOUND";
+            case OPENSSL_SIGNATURE_CTX_NEW_FAILED:
+                return "OPENSSL_SIGNATURE_CTX_NEW_FAILED";
+            case OPENSSL_SIGNATURE_INIT_FAILED:
+                return "OPENSSL_SIGNATURE_INIT_FAILED";
+            case OPENSSL_SIGNATURE_UPDATE_FAILED:
+                return "OPENSSL_SIGNATURE_UPDATE_FAILED";
+            case OPENSSL_SIGNATURE_SIGN_FAILED:
+                return "OPENSSL_SIGNATURE_SIGN_FAILED";
+            case OPENSSL_SIGNATURE_VERIFY_FAILED:
+                return "OPENSSL_SIGNATURE_VERIFY_FAILED";
+            case OPENSSL_SIGNATURE_PSS_PARAM_FAILED:
+                return "OPENSSL_SIGNATURE_PSS_PARAM_FAILED";
             case OPENSSL_UNSPECIFIED:
                 return "OPENSSL_UNSPECIFIED";
             default:

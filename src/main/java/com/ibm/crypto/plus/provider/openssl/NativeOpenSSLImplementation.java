@@ -19,7 +19,7 @@ import sun.security.util.Debug;
  * IMPORTANT: All method signatures must exactly match the native C implementations
  * in src/main/native/openssl/*.c files.
  */
-final class NativeOpenSSLImplementation {
+public final class NativeOpenSSLImplementation {
 
     // User enabled debugging
     private static Debug debug = Debug.getInstance("jceplus");
@@ -27,7 +27,7 @@ final class NativeOpenSSLImplementation {
     // Default OpenSSL library names
     private static final String OPENSSL_LIBRARY_NAME = "libssl-3-x64";
     private static final String CRYPTO_LIBRARY_NAME = "libcrypto-3-x64";
-    private static final String JGSKIT_LIBRARY_NAME = "jgskit_openssl";
+    private static final String JGSKIT_LIBRARY_NAME = "libjgskit_openssl_64";
     private static String osName = null;
     private static String osArch = null;
 
@@ -168,13 +168,18 @@ final class NativeOpenSSLImplementation {
                     debug.println("Loaded : " + libraryName);
                 }
                 return true;
+            } catch (UnsatisfiedLinkError e) {
+                System.err.println("Failed to load native library: " + libraryName);
+                e.printStackTrace(System.err);
+                throw e;
             } catch (Error e) {
                 // Rethrow serious JVM errors
                 throw e;
             } catch (Exception e) {
+                System.err.println("Failed to load native library: " + libraryName);
+                e.printStackTrace(System.err);
                 if (debug != null) {
                     debug.println("Failed to load : " + libraryName);
-                    e.printStackTrace(System.out);
                 }
             }
         } else {
@@ -224,6 +229,30 @@ final class NativeOpenSSLImplementation {
     static public native void DIGEST_reset(int fipsFlag, long digestId);
 
     static public native void DIGEST_delete(int fipsFlag, long digestId);
+
+    // =========================================================================
+    // Signature functions
+    // =========================================================================
+
+    static public native long SIGNATURE_create(int fipsFlag, byte[] keyBytes,
+            int keyLength, String algorithm, int mode);
+
+    static public native int SIGNATURE_update(int fipsFlag, long signatureId,
+            byte[] data, int offset, int length);
+
+    static public native byte[] SIGNATURE_sign(int fipsFlag, long signatureId);
+
+    static public native int SIGNATURE_verify(int fipsFlag, long signatureId,
+            byte[] signature);
+
+    static public native int SIGNATURE_size(int fipsFlag, long signatureId);
+
+    static public native void SIGNATURE_reset(int fipsFlag, long signatureId);
+
+    static public native int SIGNATURE_setPSSParams(int fipsFlag, long signatureId,
+            int saltLen, String mgf1Algorithm);
+
+    static public native void SIGNATURE_delete(int fipsFlag, long signatureId);
 
     // =========================================================================
     // HMAC functions
