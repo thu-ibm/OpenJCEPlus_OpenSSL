@@ -122,13 +122,19 @@ jclass getOpenSSLExceptionClass(JNIEnv* env);
 //============================================================================
 
 /**
- * Get or create an OpenSSL context for the specified mode.
- * Contexts are cached and reused. Thread-safe.
+ * Validate a cipher handle against the adapter-selected OpenSSL mode marker.
  *
  * @param env JNI environment
- * @param isFIPS Non-zero for FIPS mode, zero for non-FIPS mode
- * @return OpenSSL context pointer, or NULL on error (exception thrown)
+ * @param fipsFlag Non-zero for FIPS mode, zero for non-FIPS mode
+ * @param cipherId Native cipher handle
+ * @param functionName Calling function name for error reporting
+ * @param outCipherCtx Output parameter for the cipher context
+ * @return 1 on success, 0 on failure (exception thrown)
  */
-OpenSSLContext* getOrCreateContext(JNIEnv* env, int isFIPS);
+struct CipherContext;
+
+int validateCipherContext(JNIEnv* env, jint fipsFlag, jlong cipherId,
+                          const char* functionName,
+                          struct CipherContext** outCipherCtx);
 
 #endif

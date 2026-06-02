@@ -29,11 +29,10 @@
 #include "OpenSSLContext.h"
 
 /**
- * NOTE: Context management is handled by getOrCreateContext() in OpenSSLUtils.c
- * which maintains singleton contexts for FIPS and non-FIPS modes.
- *
- * The initializeOpenSSL() and cleanupOpenSSL() functions exist for API
- * compatibility with the Java layer but delegate to the singleton system.
+ * NOTE: [`initializeOpenSSL()`](src/main/native/openssl/OpenSSLJNI.c:116) and
+ * [`cleanupOpenSSL()`](src/main/native/openssl/OpenSSLJNI.c:147) exist for API
+ * compatibility with the Java layer and return/accept adapter-owned context
+ * markers rather than native-allocated OpenSSL contexts.
  */
 
 #endif

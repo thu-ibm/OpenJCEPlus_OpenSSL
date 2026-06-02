@@ -34,10 +34,9 @@
 #include "OpenSSLUtils.h"
 
 // Forward declarations
-extern int      debug;
-void            setPendingOpenSSLException(JNIEnv* env, int code, const char* msg);
-void            logOpenSSLError(const char* prefix);
-OpenSSLContext* getOrCreateContext(JNIEnv* env, int isFIPS);
+extern int debug;
+void       setPendingOpenSSLException(JNIEnv* env, int code, const char* msg);
+void       logOpenSSLError(const char* prefix);
 
 //============================================================================
 // Logging Helpers
@@ -60,7 +59,7 @@ void logFunctionExit(const char* functionName);
 //============================================================================
 
 /**
- * Validate FIPS flag and retrieve or create the appropriate OpenSSL context.
+ * Validate FIPS flag and create the appropriate OpenSSL context.
  * @param env JNI environment
  * @param fipsFlag FIPS mode flag (non-zero for FIPS)
  * @param functionName Calling function name for error reporting

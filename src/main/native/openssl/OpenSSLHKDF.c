@@ -437,12 +437,9 @@ Java_com_ibm_crypto_plus_provider_openssl_NativeOpenSSLImplementation_HKDF_1deri
         gslogFunctionEntry(functionName);
     }
 
-    // Convert FIPS flag to boolean
-    int isFIPS = (fipsFlag == 1);
-
-    // Get or create OpenSSL context
-    OpenSSLContext* context = getOrCreateContext(env, isFIPS);
-    if (context == NULL) {
+    // Validate and get context
+    OpenSSLContext* context = NULL;
+    if (!validateAndGetContext(env, fipsFlag, functionName, &context)) {
         if (debug) {
             gslogMessage("DETAIL_HMAC FAILURE: Failed to get OpenSSL context");
         }

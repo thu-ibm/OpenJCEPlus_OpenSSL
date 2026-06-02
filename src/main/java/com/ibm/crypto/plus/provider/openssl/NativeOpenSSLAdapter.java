@@ -47,7 +47,7 @@ public abstract class NativeOpenSSLAdapter implements NativeInterface {
 
     private OpenSSLContext opensslContext = null;
     private boolean opensslInitialized = false;
-    private boolean fipsMode;
+    private final boolean fipsMode;
 
     private String opensslVersion = unobtainedValue;
     private String opensslInstallPath = unobtainedValue;
@@ -209,7 +209,7 @@ public abstract class NativeOpenSSLAdapter implements NativeInterface {
 
     @Override
     public String CTX_getValue(int valueId) throws OCKException {
-        return NativeOpenSSLImplementation.CTX_getValue(opensslContext.getId(), valueId);
+        return NativeOpenSSLImplementation.CTX_getValue(getOpenSSLContext().getId(), valueId);
     }
 
     @Override

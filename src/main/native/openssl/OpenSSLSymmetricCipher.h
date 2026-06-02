@@ -34,7 +34,7 @@
  * Maintains the state for symmetric cipher operations including
  * the OpenSSL context, cipher algorithm, and operation parameters.
  */
-typedef struct {
+typedef struct CipherContext {
     EVP_CIPHER_CTX*   ctx;       /**< OpenSSL cipher context */
     const EVP_CIPHER* cipher;    /**< Cipher algorithm */
     int               padding;   /**< Padding mode (1=enabled, 0=disabled) */

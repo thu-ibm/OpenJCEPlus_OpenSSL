@@ -52,30 +52,33 @@ void logFunctionExit(const char* functionName) {
 //============================================================================
 
 /**
- * Validate and retrieve the OpenSSL context for the given FIPS mode.
+ * Validate the FIPS flag and return the adapter-owned OpenSSL context marker.
  *
- * This is a convenience wrapper around getOrCreateContext() that:
- * 1. Converts the FIPS flag to a boolean
- * 2. Retrieves or creates the appropriate context
- * 3. Optionally stores the context pointer in outContext
+ * The Java adapter owns the effective FIPS/non-FIPS context selection. Native
+ * entry points use the flag passed from Java to select a lightweight context
+ * marker that carries mode information only; OpenSSL objects are then fetched
+ * against the corresponding provider configuration for that marker.
  *
  * @param env JNI environment
  * @param fipsFlag Non-zero for FIPS mode, zero for non-FIPS
  * @param functionName Name of calling function (for error reporting)
  * @param outContext Optional output parameter to receive context pointer (can be NULL)
  * @return 1 on success, 0 on failure (with exception set)
- *
- * NOTE: The context validation is performed by getOrCreateContext(), so this
- * function primarily serves as a convenience wrapper with optional output parameter.
  */
 int validateAndGetContext(JNIEnv* env, jint fipsFlag, const char* functionName,
                           OpenSSLContext** outContext) {
-    int             isFIPS  = (fipsFlag != 0);
-    OpenSSLContext* context = getOrCreateContext(env, isFIPS);
+    static OpenSSLContext nonFipsContext = {.id = 1,
+                                            .libctx = NULL,
+                                            .fips = NULL,
+                                            .base = NULL,
+                                            .defaultProv = NULL};
+    static OpenSSLContext fipsContext    = {.id = 2,
+                                         .libctx = NULL,
+                                         .fips = NULL,
+                                         .base = NULL,
+                                         .defaultProv = NULL};
 
-    if (context == NULL) {
-        return 0;
-    }
+    OpenSSLContext* context = (fipsFlag != 0) ? &fipsContext : &nonFipsContext;
 
     if (outContext != NULL) {
         *outContext = context;

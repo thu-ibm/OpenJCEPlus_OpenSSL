@@ -12,15 +12,9 @@
  *
  * This file implements the fundamental utility functions used throughout
  * the OpenSSL native code, including:
- * - OpenSSL context creation and management (FIPS and non-FIPS)
  * - Exception handling and error reporting
  * - OpenSSL error string extraction and logging
- * - Thread-safe context initialization
- * - Provider loading and configuration
- *
- * The context management uses a double-checked locking pattern with
- * OpenSSL's thread-safe primitives to ensure safe concurrent access.
- * Separate contexts are maintained for FIPS and non-FIPS modes.
+ * - Common validation helpers for adapter-selected context markers
  */
 
 #include <jni.h>
@@ -53,62 +47,7 @@
 
 int debug = 0;
 
-static OpenSSLContext* nonFipsContext = NULL;
-static OpenSSLContext* fipsContext    = NULL;
-
-// Global lock for protecting context initialization
-// This is initialized once at library load time via CRYPTO_THREAD_lock_new()
-static CRYPTO_RWLOCK* contextLock = NULL;
-
-static OpenSSLContext* createContext(JNIEnv* env, int isFIPS);
-static void            freeInternalContext(OpenSSLContext* context);
-static int             isFIPSSupported(void);
-
-/**
- * Ensure the context lock is initialized.
- * Uses a simple double-checked locking pattern with OpenSSL's thread-safe lock
- * creation. Note: CRYPTO_THREAD_lock_new() itself is thread-safe in
- * OpenSSL 3.0+
- */
-/**
- * Ensure the context lock is initialized.
- *
- * THREAD SAFETY NOTE: This function uses a simple double-checked locking pattern.
- * While CRYPTO_THREAD_lock_new() itself is thread-safe in OpenSSL 3.0+, there is
- * an inherent race condition in this implementation where multiple threads could
- * create locks simultaneously during first initialization.
- *
- * RACE CONDITION BEHAVIOR:
- * - Multiple threads may call CRYPTO_THREAD_lock_new() concurrently
- * - Each thread checks if contextLock is NULL and creates a new lock
- * - The first assignment to contextLock wins; other locks are freed
- * - This results in a bounded memory leak of at most (N-1) locks where N is the
- *   number of threads racing during initialization (typically 1-2 locks)
- *
- * RATIONALE: This approach is acceptable because:
- * 1. The race only occurs during one-time initialization
- * 2. The memory leak is bounded and minimal (typically one extra lock)
- * 3. Proper synchronization would require platform-specific atomic operations
- * 4. The alternative (mutex-based initialization) has its own bootstrapping issues
- *
- * For production use in highly concurrent environments, consider using
- * platform-specific atomic compare-and-swap operations or pthread_once().
- */
-static void ensureContextLockInitialized(void) {
-    if (contextLock == NULL) {
-        CRYPTO_RWLOCK* newLock = CRYPTO_THREAD_lock_new();
-        if (newLock != NULL) {
-            // Try to set the lock if it's still NULL
-            // Another thread might set it between our check and assignment
-            if (contextLock == NULL) {
-                contextLock = newLock;
-            } else {
-                // Another thread beat us, free our lock
-                CRYPTO_THREAD_lock_free(newLock);
-            }
-        }
-    }
-}
+static int isFIPSSupported(void);
 
 static int isFIPSSupported(void) {
     OSSL_LIB_CTX* testCtx = OSSL_LIB_CTX_new();
@@ -127,7 +66,7 @@ static int isFIPSSupported(void) {
     return supported;
 }
 
-static OpenSSLContext* createContext(JNIEnv* env, int isFIPS) {
+OpenSSLContext* createContext(JNIEnv* env, int isFIPS) {
     static const char* functionName = "OpenSSLUtils.createContext";
 
     if (debug) {
@@ -236,48 +175,6 @@ static OpenSSLContext* createContext(JNIEnv* env, int isFIPS) {
     return context;
 }
 
-OpenSSLContext* getOrCreateContext(JNIEnv* env, int isFIPS) {
-    // Ensure lock is initialized (thread-safe)
-    ensureContextLockInitialized();
-
-    // Acquire write lock for thread-safe context access
-    if (contextLock != NULL) {
-        if (CRYPTO_THREAD_write_lock(contextLock) == 0) {
-            // Lock acquisition failed
-            setPendingOpenSSLException(env, OPENSSL_CONTEXT_INIT_FAILED,
-                                  "Failed to acquire context lock");
-            return NULL;
-        }
-    }
-
-    // Check again inside the lock
-    OpenSSLContext* context = isFIPS ? fipsContext : nonFipsContext;
-
-    if (context == NULL) {
-        context = createContext(env, isFIPS);
-        if (context != NULL) {
-            if (isFIPS) {
-                fipsContext = context;
-            } else {
-                nonFipsContext = context;
-            }
-        }
-    }
-
-    // Release lock
-    if (contextLock != NULL) {
-        if (CRYPTO_THREAD_unlock(contextLock) == 0) {
-            // Lock release failed - log but don't throw since we have the
-            // context
-            if (debug) {
-                gslogError("Failed to release context lock");
-            }
-        }
-    }
-
-    return context;
-}
-
 static void freeInternalContext(OpenSSLContext* context) {
     if (context != NULL) {
         if (context->fips != NULL) {
@@ -296,53 +193,12 @@ static void freeInternalContext(OpenSSLContext* context) {
     }
 }
 
-#ifndef _MSC_VER
-__attribute__((destructor))
-#endif
-static void cleanupContexts(void) {
-    // Acquire lock before cleanup
-    if (contextLock != NULL) {
-        if (CRYPTO_THREAD_write_lock(contextLock) == 0) {
-            // Lock acquisition failed during cleanup - proceed anyway
-            // since this is called during library unload
-            if (debug) {
-                gslogError(
-                    "Failed to acquire lock during cleanup, proceeding anyway");
-            }
-        }
-    }
-
-    if (nonFipsContext != NULL) {
-        freeInternalContext(nonFipsContext);
-        nonFipsContext = NULL;
-    }
-
-    if (fipsContext != NULL) {
-        freeInternalContext(fipsContext);
-        fipsContext = NULL;
-    }
-
-    // Release and destroy lock
-    if (contextLock != NULL) {
-        CRYPTO_THREAD_unlock(
-            contextLock);  // Ignore return value during cleanup
-        CRYPTO_THREAD_lock_free(contextLock);
-        contextLock = NULL;
-    }
-
-#ifdef DEBUG_OPENSSL_DETAIL
-    if (debug) {
-        gslogMessage("DETAIL_OPENSSL OpenSSL contexts cleaned up");
-    }
-#endif
-}
 int validateCipherContext(JNIEnv* env, jint fipsFlag, jlong cipherId,
                           const char*     functionName,
                           CipherContext** outCipherCtx) {
-    int             isFIPS  = (fipsFlag != 0);
-    OpenSSLContext* context = getOrCreateContext(env, isFIPS);
+    OpenSSLContext* context = NULL;
 
-    if (context == NULL) {
+    if (!validateAndGetContext(env, fipsFlag, functionName, &context)) {
         logFunctionExit(functionName);
         return 0;
     }

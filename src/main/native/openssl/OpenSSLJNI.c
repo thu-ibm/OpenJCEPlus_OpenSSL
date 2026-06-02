@@ -106,12 +106,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 /**
  * Initialize OpenSSL - Returns a context ID for compatibility with Java layer.
  *
- * NOTE: This function exists for API compatibility but doesn't actually create
- * a context. The real context management is handled by getOrCreateContext() in
- * OpenSSLUtils.c, which creates singleton contexts per FIPS mode.
+ * NOTE: This function exists for API compatibility. It creates a context only
+ * to validate that initialization succeeds for the requested mode.
  *
- * The returned ID is just a marker (1 for non-FIPS, 2 for FIPS) that matches
- * the singleton context IDs used internally.
+ * The returned ID is a marker (1 for non-FIPS, 2 for FIPS) selected by the
+ * Java adapter layer.
  */
 JNIEXPORT jlong JNICALL
 Java_com_ibm_crypto_plus_provider_openssl_NativeOpenSSLImplementation_initializeOpenSSL(
@@ -126,33 +125,23 @@ Java_com_ibm_crypto_plus_provider_openssl_NativeOpenSSLImplementation_initialize
         gslogFunctionEntry(functionName);
     }
 
-    // Trigger context creation through the singleton system
-    // This ensures the context is properly initialized
-    OpenSSLContext* context = getOrCreateContext(env, isFIPS ? 1 : 0);
-    if (context == NULL) {
-        logFunctionExit(functionName);
-        return -1;
-    }
+    jlong contextId = isFIPS ? 2 : 1;
 
 #ifdef DEBUG_OPENSSL_DETAIL
     if (debug) {
         gslogMessage(
             "DETAIL_OPENSSL OpenSSL initialized with context ID %ld, FIPS "
             "mode: %d",
-            context->id, isFIPS);
+            (long)contextId, isFIPS);
     }
 #endif
 
     logFunctionExit(functionName);
-    return context->id;
+    return contextId;
 }
 
 /**
  * Cleanup OpenSSL - No-op for compatibility.
- *
- * NOTE: Actual cleanup happens automatically via the destructor in
- * OpenSSLUtils.c. Singleton contexts are cleaned up when the library is
- * unloaded.
  */
 JNIEXPORT void JNICALL
 Java_com_ibm_crypto_plus_provider_openssl_NativeOpenSSLImplementation_cleanupOpenSSL(
@@ -163,20 +152,18 @@ Java_com_ibm_crypto_plus_provider_openssl_NativeOpenSSLImplementation_cleanupOpe
     if (debug) {
         gslogFunctionEntry(functionName);
         gslogMessage(
-            "DETAIL_OPENSSL cleanupOpenSSL called for context %ld (no-op, "
-            "cleanup handled by destructor)",
+            "DETAIL_OPENSSL cleanupOpenSSL called for context %ld (no-op)",
             contextId);
         gslogFunctionExit(functionName);
     }
 
-    // No-op: Singleton contexts are managed by OpenSSLUtils.c and cleaned up
-    // automatically when the library is unloaded via the destructor.
+    // No-op: cleanup is handled by the caller/language side lifecycle.
 }
 
 /**
  * Get context value - Returns OpenSSL version or install path.
  *
- * NOTE: contextId is ignored since we use singleton contexts.
+ * NOTE: contextId is only used as a mode marker from the Java layer.
  * The information returned is global to the OpenSSL installation.
  */
 JNIEXPORT jstring JNICALL
