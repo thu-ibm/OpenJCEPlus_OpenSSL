@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenSSL Native Bridge Architecture Documentation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 8px;
+        }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 15px; margin-bottom: 30px; }
+        h2 { color: #2c3e50; margin-top: 40px; padding-bottom: 10px; border-bottom: 2px solid #ecf0f1; }
+        h3 { color: #34495e; margin-top: 30px; }
+        h4 { color: #555; margin-top: 20px; }
+        code { background-color: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; color: #e74c3c; }
+        pre { background-color: #2c3e50; color: #ecf0f1; padding: 20px; border-radius: 5px; overflow-x: auto; }
+        pre code { background-color: transparent; color: inherit; padding: 0; }
+        ul, ol { margin-left: 30px; }
+        li { margin-bottom: 8px; }
+        a { color: #3498db; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        hr { border: none; border-top: 2px solid #ecf0f1; margin: 40px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+<h1>OpenSSL Native Bridge Architecture Documentation</h1>
+
+<h2 id="table-of-contents">Table of Contents</h2>
+<li>[Overview](#overview)</li>
+<li>[Architecture](#architecture)</li>
+<li>[Component Details](#component-details)</li>
+<li>[Data Flows](#data-flows)</li>
+<li>[Implementation Patterns](#implementation-patterns)</li>
+<li>[Error Handling](#error-handling)</li>
+<li>[Memory Management](#memory-management)</li>
+
+<hr>
+
+<h2 id="overview">Overview</h2>
+
+<p>The OpenSSL Native Bridge provides a JNI (Java Native Interface) layer that allows Java cryptographic operations to leverage OpenSSL's high-performance native implementations. This architecture enables:</p>
+
+<li><strong>FIPS Mode Support</strong>: Separate contexts for FIPS and non-FIPS operations</li>
+<li><strong>High Performance</strong>: Direct native OpenSSL calls without Java overhead</li>
+<li><strong>Multiple Algorithms</strong>: Support for symmetric ciphers, digests, HMAC, KDFs, and authenticated encryption</li>
+<li><strong>Thread Safety</strong>: Singleton context management with thread-safe initialization</li>
+
+<hr>
+
+<h2 id="architecture">Architecture</h2>
+
+<h3>High-Level Architecture</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                    Java Application Layer                    │
+│  (JCE Provider API - javax.crypto.*, java.security.*)       │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│              Java Provider Implementation                    │
+│  - AESGCMCipher, MessageDigest implementations, etc.        │
+│  - OpenSSLContext (Java wrapper)                            │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│          NativeOpenSSLImplementation (JNI Bridge)           │
+│  - Native method declarations                                │
+│  - Library loading logic                                     │
+└────────────────────────┬────────────────────────────────────┘
+                         │ JNI Boundary
+┌────────────────────────▼────────────────────────────────────┐
+│                  Native C Layer (JNI)                        │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ OpenSSLJNI.c - Entry point &amp; context lifecycle       │  │
+│  └──────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ OpenSSLUtils.c - Context management &amp; utilities      │  │
+│  └──────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ OpenSSLHelpers.c - Common helper functions           │  │
+│  └──────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ Algorithm Implementations:                            │  │
+│  │ - OpenSSLDigest.c (SHA-1, SHA-2, SHA-3)             │  │
+│  │ - OpenSSLHMAC.c (HMAC operations)                    │  │
+│  │ - OpenSSLSymmetricCipher.c (AES, DES, ChaCha20)     │  │
+│  │ - OpenSSLGCM.c (AES-GCM authenticated encryption)    │  │
+│  │ - OpenSSLCCM.c (AES-CCM authenticated encryption)    │  │
+│  │ - OpenSSLHKDF.c (HKDF key derivation)               │  │
+│  │ - OpenSSLPBKDF2.c (PBKDF2 key derivation)           │  │
+│  │ - OpenSSLKeyWrap.c (AES Key Wrap RFC 3394/5649)     │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                    OpenSSL 3.x Library                       │
+│  - EVP API (high-level cryptographic operations)            │
+│  - Provider architecture (FIPS, default, base)              │
+│  - Low-level algorithm implementations                       │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>Directory Structure</h3>
+
+<pre><code>src/main/
+├── java/com/ibm/crypto/plus/provider/
+│   ├── openssl/
+│   │   ├── NativeOpenSSLImplementation.java  # JNI method declarations
+│   │   └── OpenSSLContext.java               # Java context wrapper
+│   ├── AESGCMCipher.java                     # GCM cipher implementation
+│   └── base/
+│       └── GCMCipher.java                    # Base GCM cipher class
+└── native/openssl/
+    ├── OpenSSLJNI.c                          # JNI entry point
+    ├── OpenSSLUtils.c                        # Core utilities
+    ├── OpenSSLHelpers.c                      # Helper functions
+    ├── OpenSSLContext.h                      # Context structures
+    ├── OpenSSLExceptionCodes.h               # Error codes
+    ├── OpenSSLLogging.h                      # Logging infrastructure
+    ├── OpenSSLDigest.c/h                     # Message digest operations
+    ├── OpenSSLHMAC.c/h                       # HMAC operations
+    ├── OpenSSLSymmetricCipher.c/h            # Symmetric encryption
+    ├── OpenSSLGCM.c/h                        # GCM mode
+    ├── OpenSSLCCM.c/h                        # CCM mode
+    ├── OpenSSLHKDF.c/h                       # HKDF key derivation
+    ├── OpenSSLPBKDF2.c/h                     # PBKDF2 key derivation
+    └── OpenSSLKeyWrap.c/h                    # AES Key Wrap</code></pre>
+
+<hr>
+
+<h2 id="component-details">Component Details</h2>
+
+<h3>1. Library Loading (NativeOpenSSLImplementation.java)</h3>
+
+<p><strong>Purpose</strong>: Manages the loading of OpenSSL and JNI bridge libraries.</p>
+
+<p><strong>Key Features</strong>:</p>
+<li>Environment variable support (<code>OPENSSL_HOME</code>, <code>OPENSSL_DEBUG</code>)</li>
+<li>System property overrides (<code>openssl.library.path</code>, <code>jgskit.library.path</code>)</li>
+<li>Platform-specific path resolution (Windows vs Unix)</li>
+<li>Dependency order: OpenSSL libraries → JNI bridge library</li>
+
+<p><strong>Loading Sequence</strong>:</p>
+<pre><code>1. Static initializer runs
+2. preloadOpenSSL() → loads libssl-3-x64 and libcrypto-3-x64
+3. preloadJGskit() → loads jgskit_openssl (JNI bridge)
+4. JNI_OnLoad() called in native code
+5. Debug logging initialized</code></pre>
+
+<h3>2. Context Management (OpenSSLUtils.c)</h3>
+
+<p><strong>Purpose</strong>: Manages OpenSSL library contexts with FIPS mode support.</p>
+
+<p><strong>Key Structures</strong>:</p>
+<pre><code>typedef struct {
+    long id;                    // Context ID (1=non-FIPS, 2=FIPS)
+    OSSL_LIB_CTX* libctx;      // OpenSSL library context
+    OSSL_PROVIDER* fips;        // FIPS provider (FIPS mode only)
+    OSSL_PROVIDER* base;        // Base provider (FIPS mode only)
+    OSSL_PROVIDER* defaultProv; // Default provider (non-FIPS only)
+} OpenSSLContext;</code></pre>
+
+<p><strong>Context Lifecycle</strong>:</p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│ 1. First Operation Request                              │
+│    - Java calls initializeOpenSSL(isFIPS)              │
+└────────────────┬────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────┐
+│ 2. getOrCreateContext(env, isFIPS)                     │
+│    - Acquire write lock (thread-safe)                  │
+│    - Check if context exists                           │
+│    - If not, call createContext()                      │
+└────────────────┬────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────┐
+│ 3. createContext(env, isFIPS)                          │
+│    IF FIPS:                                            │
+│      - Create OSSL_LIB_CTX                            │
+│      - Load FIPS provider                             │
+│      - Enable FIPS properties                         │
+│      - Load base provider                             │
+│    ELSE:                                               │
+│      - Create OSSL_LIB_CTX                            │
+│      - Load default provider                          │
+└────────────────┬────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────┐
+│ 4. Store in global singleton                           │
+│    - fipsContext or nonFipsContext                     │
+│    - Release lock                                       │
+│    - Return context                                     │
+└────────────────┬────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────┐
+│ 5. Subsequent Operations                                │
+│    - Reuse existing context (no recreation)            │
+│    - Thread-safe access via lock                       │
+└────────────────┬────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────┐
+│ 6. Library Unload                                       │
+│    - cleanupContexts() called (destructor)             │
+│    - Unload providers                                   │
+│    - Free OSSL_LIB_CTX                                 │
+│    - Free context structures                            │
+└─────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>3. Helper Functions (OpenSSLHelpers.c)</h3>
+
+<p><strong>Purpose</strong>: Provides reusable utility functions for common operations.</p>
+
+<p><strong>Categories</strong>:</p>
+
+<h4>Logging Helpers</h4>
+<pre><code>void logFunctionEntry(const char* functionName);
+void logFunctionExit(const char* functionName);</code></pre>
+
+<h4>Context Validation</h4>
+<pre><code>int validateAndGetContext(JNIEnv* env, jint fipsFlag,
+                         const char* functionName,
+                         OpenSSLContext** outContext);</code></pre>
+
+<h4>String Handling</h4>
+<pre><code>const char* getStringUTFCharsSafe(JNIEnv* env, jstring javaString,
+                                  const char* functionName,
+                                  const char* errorMsg);
+void cleanupStringUTFChars(JNIEnv* env, jstring javaString, const char* str);</code></pre>
+
+<h4>Byte Array Handling</h4>
+<pre><code>jbyte* getByteArrayElementsSafe(JNIEnv* env, jbyteArray array,
+                                const char* functionName,
+                                const char* errorMsg);
+void cleanupByteArray(JNIEnv* env, jbyteArray array,
+                     jbyte* bytes, jint mode);
+void cleanupIOArrays(JNIEnv* env,
+                    jbyteArray inputArray, jbyte* inputBytes,
+                    jbyteArray outputArray, jbyte* outputBytes,
+                    jboolean commitOutput);</code></pre>
+
+<h4>Validation Helpers</h4>
+<pre><code>int validateIntRange(JNIEnv* env, jint value, jint min, jint max,
+                    const char* functionName, const char* errorMsg);
+int validateArrayLength(JNIEnv* env, jbyteArray array, jint min, jint max,
+                       const char* functionName, const char* errorMsg);
+int validateOffsetAndLength(JNIEnv* env, jint arrayLength,
+                           jint offset, jint length,
+                           const char* functionName,
+                           const char* errorMsg);</code></pre>
+
+<h4>OpenSSL Object Helpers</h4>
+<pre><code>const EVP_MD* fetchDigestSafe(JNIEnv* env, OpenSSLContext* context,
+                              const char* algoName, const char* functionName,
+                              int errorCode, const char* errorMsg);
+EVP_CIPHER_CTX* createCipherCtxSafe(JNIEnv* env, const char* functionName,
+                                    int errorCode, const char* errorMsg);</code></pre>
+
+<hr>
+
+<h2 id="data-flows">Data Flows</h2>
+
+<h3>1. Message Digest Flow (SHA-256 Example)</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Java Application                                             │
+│   MessageDigest md = MessageDigest.getInstance(&quot;SHA-256&quot;)   │
+│   md.update(data)                                           │
+│   byte[] hash = md.digest()                                 │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ Java Provider (OpenJCEPlus)                                 │
+│   OpenSSLDigest extends MessageDigestSpi                    │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ NativeOpenSSLImplementation.java                            │
+│   native long DIGEST_create(int fipsFlag, String algo)     │
+│   native int DIGEST_update(long id, byte[] data, ...)      │
+│   native byte[] DIGEST_digest(long id)                     │
+└────────────────┬────────────────────────────────────────────┘
+                 │ JNI Boundary
+┌────────────────▼────────────────────────────────────────────┐
+│ OpenSSLDigest.c                                             │
+│                                                              │
+│ DIGEST_create:                                              │
+│   1. logFunctionEntry()                                     │
+│   2. validateAndGetContext() → get OpenSSL context         │
+│   3. getStringUTFCharsSafe() → get algorithm name          │
+│   4. mallocSafe() → allocate OpenSSLDigestContext          │
+│   5. fetchDigestSafe() → EVP_MD_fetch(libctx, &quot;SHA-256&quot;)  │
+│   6. createMDCtxSafe() → EVP_MD_CTX_new()                 │
+│   7. EVP_DigestInit_ex2() → initialize digest              │
+│   8. logFunctionExit()                                      │
+│   9. return (jlong)digestCtx                                │
+│                                                              │
+│ DIGEST_update:                                              │
+│   1. logFunctionEntry()                                     │
+│   2. validateDigestContext() → validate context ID         │
+│   3. getByteArrayElementsSafe() → get data bytes           │
+│   4. EVP_DigestUpdate(mdCtx, data, length)                 │
+│   5. cleanupByteArray() → release JNI array                │
+│   6. logFunctionExit()                                      │
+│   7. return 1 (success)                                     │
+│                                                              │
+│ DIGEST_digest:                                              │
+│   1. logFunctionEntry()                                     │
+│   2. validateDigestContext() → validate context ID         │
+│   3. newByteArraySafe() → allocate output array            │
+│   4. getByteArrayElementsSafe() → get output buffer        │
+│   5. EVP_DigestFinal_ex(mdCtx, buffer, &amp;len)              │
+│   6. cleanupByteArray() → commit output                    │
+│   7. EVP_DigestInit_ex2() → reset for reuse               │
+│   8. logFunctionExit()                                      │
+│   9. return output array                                    │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>2. AES-GCM Encryption Flow</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Java Application                                             │
+│   Cipher cipher = Cipher.getInstance(&quot;AES/GCM/NoPadding&quot;)  │
+│   cipher.init(Cipher.ENCRYPT_MODE, key, gcmSpec)           │
+│   cipher.updateAAD(aad)                                     │
+│   byte[] ciphertext = cipher.doFinal(plaintext)            │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ AESGCMCipher.java extends GCMCipher                         │
+│   - Manages GCM parameters (IV, tag length, AAD)           │
+│   - Calls native methods                                    │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ NativeOpenSSLImplementation.java                            │
+│   native long CIPHER_create(int fips, String name)         │
+│   native void GCM_init(long id, int encrypt, ...)          │
+│   native int GCM_update(long id, byte[] in, ...)           │
+│   native int GCM_encryptFinal(long id, ...)                │
+└────────────────┬────────────────────────────────────────────┘
+                 │ JNI Boundary
+┌────────────────▼────────────────────────────────────────────┐
+│ OpenSSLSymmetricCipher.c + OpenSSLGCM.c                    │
+│                                                              │
+│ CIPHER_create(&quot;AES-256-GCM&quot;):                              │
+│   1. validateAndGetContext()                                │
+│   2. mallocSafe() → allocate CipherContext                 │
+│   3. createCipherCtxSafe() → EVP_CIPHER_CTX_new()         │
+│   4. EVP_CIPHER_fetch(libctx, &quot;AES-256-GCM&quot;)              │
+│   5. return (jlong)cipherCtx                                │
+│                                                              │
+│ GCM_init:                                                   │
+│   1. validateCipherContext()                                │
+│   2. getByteArrayElementsSafe() → get key, IV              │
+│   3. EVP_CipherInit_ex(ctx, cipher, NULL, NULL, encrypt)   │
+│   4. EVP_CIPHER_CTX_ctrl(SET_IVLEN) if non-default        │
+│   5. EVP_CipherInit_ex(ctx, NULL, NULL, key, IV, encrypt)  │
+│   6. Store tagLen in context                                │
+│   7. cleanupByteArrays()                                    │
+│                                                              │
+│ GCM_update (with AAD):                                      │
+│   1. validateCipherContext()                                │
+│   2. Process AAD: EVP_CipherUpdate(ctx, NULL, &amp;len, aad)  │
+│   3. Process plaintext: EVP_CipherUpdate(ctx, out, in)     │
+│   4. return output length                                   │
+│                                                              │
+│ GCM_encryptFinal:                                           │
+│   1. validateCipherContext()                                │
+│   2. Process final AAD if present                          │
+│   3. validateOutputBuffer() → check output size            │
+│   4. Process final input if present                        │
+│   5. EVP_CipherFinal_ex() → finalize                       │
+│   6. EVP_CIPHER_CTX_ctrl(GET_TAG) → get auth tag          │
+│   7. Append tag to output                                   │
+│   8. return total length (ciphertext + tag)                │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>3. HKDF Key Derivation Flow</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Java Application                                             │
+│   SecretKeyFactory factory =                                │
+│     SecretKeyFactory.getInstance(&quot;HKDF-SHA256&quot;)            │
+│   SecretKey derived = factory.generateSecret(spec)         │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ NativeOpenSSLImplementation.java                            │
+│   native byte[] HKDF_extract(int fips, String algo,        │
+│                              byte[] salt, byte[] ikm)       │
+│   native byte[] HKDF_expand(int fips, String algo,         │
+│                             byte[] prk, byte[] info, int len)│
+│   native byte[] HKDF_derive(int fips, String algo,         │
+│                             byte[] salt, byte[] ikm,        │
+│                             byte[] info, int len)           │
+└────────────────┬────────────────────────────────────────────┘
+                 │ JNI Boundary
+┌────────────────▼────────────────────────────────────────────┐
+│ OpenSSLHKDF.c                                               │
+│                                                              │
+│ HKDF_derive (combined extract + expand):                   │
+│   1. logFunctionEntry()                                     │
+│   2. validateAndGetContext()                                │
+│   3. getStringUTFCharsSafe() → get algorithm name          │
+│   4. getByteArrayElementsSafe() → get salt, IKM, info      │
+│   5. mallocSafe() → allocate output buffer                 │
+│   6. EVP_MD_fetch(libctx, algo)                            │
+│   7. fetchKDFSafe() → EVP_KDF_fetch(libctx, &quot;HKDF&quot;)       │
+│   8. EVP_KDF_CTX_new(kdf)                                  │
+│   9. Build OSSL_PARAM array:                               │
+│      - MODE = EXTRACT_AND_EXPAND                           │
+│      - DIGEST = algorithm name                             │
+│      - KEY = IKM                                           │
+│      - SALT = salt (if present)                            │
+│      - INFO = info (if present)                            │
+│  10. EVP_KDF_derive(kctx, output, length, params)         │
+│  11. Cleanup contexts and arrays                           │
+│  12. newByteArraySafe() → create result array              │
+│  13. SetByteArrayRegion() → copy output                    │
+│  14. logFunctionExit()                                      │
+│  15. return result array                                    │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<hr>
+
+<h2 id="implementation-patterns">Implementation Patterns</h2>
+
+<h3>1. Standard Function Pattern</h3>
+
+<p>Every JNI function follows this pattern:</p>
+
+<pre><code>JNIEXPORT returnType JNICALL
+Java_package_Class_methodName(JNIEnv* env, jclass cls, parameters) {
+    static const char* functionName = &quot;Class.methodName&quot;;
+    
+    // 1. Entry logging
+    logFunctionEntry(functionName);
+    
+    // 2. Context validation
+    Context* ctx = NULL;
+    if (!validateContext(env, fipsFlag, id, functionName, &amp;ctx)) {
+        return errorValue;
+    }
+    
+    // 3. Parameter validation and extraction
+    jbyte* bytes = getByteArrayElementsSafe(env, array, functionName, &quot;error&quot;);
+    if (bytes == NULL) {
+        return errorValue;
+    }
+    
+    // 4. OpenSSL operations
+    int result = EVP_SomeOperation(ctx, bytes, length);
+    
+    // 5. Cleanup (AFTER operation, BEFORE error check)
+    cleanupByteArray(env, array, bytes, JNI_ABORT);
+    
+    // 6. Error handling
+    if (result != 1) {
+        throwOpenSSLException(env, ERROR_CODE, &quot;Operation failed&quot;);
+        logOpenSSLError(&quot;EVP_SomeOperation&quot;);
+        logFunctionExit(functionName);
+        return errorValue;
+    }
+    
+    // 7. Exit logging and return
+    logFunctionExit(functionName);
+    return successValue;
+}</code></pre>
+
+<h3>2. Resource Management Pattern</h3>
+
+<p><strong>Allocation Order</strong>:</p>
+<li>Validate inputs</li>
+<li>Allocate native resources</li>
+<li>Perform operations</li>
+<li>Cleanup in reverse order</li>
+
+<p><strong>Cleanup Rules</strong>:</p>
+<li>Always cleanup after operations, not before error checks</li>
+<li>Use <code>JNI_ABORT</code> for input arrays (no copy back)</li>
+<li>Use <code>0</code> or <code>JNI_TRUE</code> for output arrays (copy back)</li>
+<li>Free native memory with <code>free()</code></li>
+<li>Free OpenSSL objects with appropriate <code>_free()</code> functions</li>
+
+<p><strong>Example</strong>:</p>
+<pre><code>// Allocate
+jbyte* input = getByteArrayElementsSafe(env, inputArray, ...);
+jbyte* output = getByteArrayElementsSafe(env, outputArray, ...);
+unsigned char* buffer = mallocSafe(env, size, ...);
+
+// Operate
+int result = EVP_Operation(ctx, output, input, buffer, size);
+
+// Cleanup (reverse order, after operation)
+free(buffer);
+cleanupByteArray(env, outputArray, output, JNI_TRUE);  // Commit
+cleanupByteArray(env, inputArray, input, JNI_ABORT);   // Discard
+
+// Check result
+if (result != 1) {
+    // Handle error
+}</code></pre>
+
+<h3>3. Error Handling Pattern</h3>
+
+<p><strong>Three-Level Error Handling</strong>:</p>
+
+<li><strong>JNI Exceptions</strong> (Java-visible):</li>
+<pre><code>throwOpenSSLException(env, OPENSSL_CIPHER_INIT_FAILED,
+                     &quot;Failed to initialize cipher&quot;);</code></pre>
+
+<li><strong>OpenSSL Error Logging</strong> (Debug):</li>
+<pre><code>logOpenSSLError(&quot;EVP_CipherInit_ex&quot;);</code></pre>
+
+<li><strong>Function Exit Logging</strong> (Debug):</li>
+<pre><code>logFunctionExit(functionName);</code></pre>
+
+<p><strong>Error Code Categories</strong> (OpenSSLExceptionCodes.h):</p>
+<li><code>OPENSSL_UNSPECIFIED</code> (0): Generic error</li>
+<li><code>OPENSSL_ALLOCATION_FAILED</code>: Memory allocation failure</li>
+<li><code>OPENSSL_CIPHER_*</code>: Cipher operation errors</li>
+<li><code>OPENSSL_DIGEST_*</code>: Digest operation errors</li>
+<li><code>OPENSSL_HMAC_*</code>: HMAC operation errors</li>
+<li><code>OPENSSL_FIPS_*</code>: FIPS mode errors</li>
+<li><code>OPENSSL_TAG_MISMATCH_ERROR</code> (-100): Authentication tag verification failed</li>
+
+<hr>
+
+<h2 id="error-handling">Error Handling</h2>
+
+<h3>Exception Flow</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Native Code Error Occurs                                     │
+│   - OpenSSL operation fails                                  │
+│   - Validation fails                                         │
+│   - Memory allocation fails                                  │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ throwOpenSSLException(env, code, message)                   │
+│   1. Find OpenSSLException class                            │
+│   2. Create exception object with code and message          │
+│   3. Throw exception (sets pending exception in JNI)        │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ logOpenSSLError(prefix) [if debug enabled]                  │
+│   1. ERR_get_error() → get OpenSSL error code              │
+│   2. ERR_error_string_n() → convert to string              │
+│   3. fprintf(stderr, ...) → log error                       │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ logFunctionExit(functionName)                               │
+│   - Log function exit for debugging                         │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ Return error value to Java                                  │
+│   - NULL for object returns                                 │
+│   - -1 for integer returns                                  │
+│   - Special codes (e.g., -100 for tag mismatch)            │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│ JNI Returns to Java                                         │
+│   - Pending exception is thrown                             │
+│   - Java catch block handles OpenSSLException              │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<hr>
+
+<h2 id="memory-management">Memory Management</h2>
+
+<h3>JNI Memory Rules</h3>
+
+<li><strong>Java Arrays</strong>:</li>
+<p>   - <code>GetByteArrayElements()</code> → must call <code>ReleaseByteArrayElements()</code></p>
+<p>   - Use <code>JNI_ABORT</code> for read-only (no copy back)</p>
+<p>   - Use <code>0</code> for read-write (copy back)</p>
+
+<li><strong>Java Strings</strong>:</li>
+<p>   - <code>GetStringUTFChars()</code> → must call <code>ReleaseStringUTFChars()</code></p>
+
+<li><strong>Native Memory</strong>:</li>
+<p>   - <code>malloc()</code> → must call <code>free()</code></p>
+<p>   - Always zero-initialize: <code>memset(ptr, 0, size)</code></p>
+
+<li><strong>OpenSSL Objects</strong>:</li>
+<p>   - <code>EVP_MD_fetch()</code> → must call <code>EVP_MD_free()</code></p>
+<p>   - <code>EVP_CIPHER_fetch()</code> → must call <code>EVP_CIPHER_free()</code></p>
+<p>   - <code>EVP_CIPHER_CTX_new()</code> → must call <code>EVP_CIPHER_CTX_free()</code></p>
+<p>   - <code>EVP_MD_CTX_new()</code> → must call <code>EVP_MD_CTX_free()</code></p>
+<p>   - <code>HMAC_CTX_new()</code> → must call <code>HMAC_CTX_free()</code></p>
+<p>   - <code>EVP_KDF_fetch()</code> → must call <code>EVP_KDF_free()</code></p>
+<p>   - <code>EVP_KDF_CTX_new()</code> → must call <code>EVP_KDF_CTX_free()</code></p>
+
+<h3>Context Lifecycle</h3>
+
+<p><strong>Creation</strong>:</p>
+<pre><code>OpenSSLDigestContext* ctx = mallocSafe(env, sizeof(OpenSSLDigestContext), ...);
+ctx-&gt;md = fetchDigestSafe(env, context, algoName, ...);
+ctx-&gt;mdCtx = createMDCtxSafe(env, functionName, ...);</code></pre>
+
+<p><strong>Usage</strong>:</p>
+<pre><code>// Context is reused across multiple operations
+EVP_DigestUpdate(ctx-&gt;mdCtx, data, length);
+EVP_DigestFinal_ex(ctx-&gt;mdCtx, output, &amp;len);
+EVP_DigestInit_ex2(ctx-&gt;mdCtx, ctx-&gt;md, NULL);  // Reset for reuse</code></pre>
+
+<p><strong>Deletion</strong>:</p>
+<pre><code>if (ctx-&gt;mdCtx != NULL) {
+    EVP_MD_CTX_free(ctx-&gt;mdCtx);
+}
+if (ctx-&gt;md != NULL) {
+    EVP_MD_free((EVP_MD*)ctx-&gt;md);
+}
+free(ctx);</code></pre>
+
+<hr>
+
+<h2 id="debugging">Debugging</h2>
+
+<h3>Debug Logging</h3>
+
+<p>Enable debug logging:</p>
+<pre><code>export OPENSSL_DEBUG=1
+java -Dopenssl.debug=true YourApp</code></pre>
+
+<p>Debug output includes:</p>
+<li>Function entry/exit</li>
+<li>OpenSSL error messages</li>
+<li>Detailed operation traces (when <code>DEBUG_*_DETAIL</code> defined)</li>
+<li>Hexadecimal data dumps</li>
+
+<h3>Logging Levels</h3>
+
+<li><strong>Function Tracing</strong>:</li>
+<pre><code>logFunctionEntry(functionName);  // &quot;Entering Class.method&quot;
+logFunctionExit(functionName);   // &quot;Exiting Class.method&quot;</code></pre>
+
+<li><strong>Error Logging</strong>:</li>
+<pre><code>logOpenSSLError(&quot;EVP_CipherInit_ex&quot;);  // OpenSSL error string</code></pre>
+
+<li><strong>Detail Logging</strong> (compile-time):</li>
+<pre><code>#ifdef DEBUG_CIPHER_DETAIL
+if (debug) {
+    gslogMessage(&quot;DETAIL_CIPHER Encrypted %d bytes&quot;, len);
+}
+#endif</code></pre>
+
+<hr>
+
+<h2 id="security-considerations">Security Considerations</h2>
+
+<h3>1. FIPS Mode</h3>
+
+<li>Separate contexts for FIPS and non-FIPS operations</li>
+<li>FIPS provider loaded only when requested</li>
+<li>FIPS properties enabled via <code>EVP_default_properties_enable_fips()</code></li>
+<li>All operations use the appropriate context</li>
+
+<h3>2. Memory Security</h3>
+
+<li>Sensitive data (keys, IVs) zeroed before freeing:</li>
+<pre><code>if (cipherCtx-&gt;key != NULL) {
+    memset(cipherCtx-&gt;key, 0, cipherCtx-&gt;keyLen);
+    free(cipherCtx-&gt;key);
+}</code></pre>
+
+<h3>3. Input Validation</h3>
+
+<li>All inputs validated before use</li>
+<li>Array bounds checked</li>
+<li>Integer overflow protection</li>
+<li>NULL pointer checks</li>
+
+<h3>4. Thread Safety</h3>
+
+<li>Context creation protected by <code>CRYPTO_RWLOCK</code></li>
+<li>Singleton contexts prevent race conditions</li>
+<li>OpenSSL 3.x is thread-safe by design</li>
+
+<hr>
+
+<h2 id="performance-optimizations">Performance Optimizations</h2>
+
+<h3>1. Context Reuse</h3>
+
+<li>Digest contexts reset after finalization (no recreation)</li>
+<li>Cipher contexts reinitialized for multiple operations</li>
+<li>Singleton OpenSSL contexts (no per-operation overhead)</li>
+
+<h3>2. Direct Buffer Support</h3>
+
+<li><code>getByteBufferPointer()</code> for zero-copy operations</li>
+<li>Direct ByteBuffer access avoids array copying</li>
+
+<h3>3. Streaming Operations</h3>
+
+<li>Update/final pattern for large data</li>
+<li>Incremental processing reduces memory footprint</li>
+
+<h3>4. Native Performance</h3>
+
+<li>Direct OpenSSL calls (no Java overhead)</li>
+<li>Hardware acceleration (AES-NI, etc.) via OpenSSL</li>
+<li>Optimized assembly implementations in OpenSSL</li>
+
+<hr>
+
+<h2 id="testing">Testing</h2>
+
+<h3>Test Structure</h3>
+
+<pre><code>src/test/java/ibm/jceplus/junit/openssl/
+├── TestOpenSSLDigestNative.java      # Digest tests
+├── TestOpenSSLHMACNative.java        # HMAC tests
+├── TestOpenSSLGCMNative.java         # GCM tests
+├── TestOpenSSLCCMNative.java         # CCM tests
+├── TestOpenSSLHKDFNative.java        # HKDF tests
+├── TestOpenSSLPBKDF2Native.java      # PBKDF2 tests
+└── TestOpenSSLKeyWrap.java           # Key wrap tests</code></pre>
+
+<h3>Test Categories</h3>
+
+<li><strong>Algorithm Tests</strong>: Verify correct cryptographic output</li>
+<li><strong>FIPS Tests</strong>: Verify FIPS mode operation</li>
+<li><strong>Interop Tests</strong>: Verify compatibility with Java providers</li>
+<li><strong>Edge Case Tests</strong>: Boundary conditions, error handling</li>
+<li><strong>Performance Tests</strong>: Benchmark operations</li>
+
+<hr>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>This architecture provides a robust, high-performance bridge between Java cryptographic APIs and OpenSSL's native implementations. Key strengths include:</p>
+
+<li><strong>Clean separation of concerns</strong>: JNI layer, utilities, algorithm implementations</li>
+<li><strong>Consistent patterns</strong>: All functions follow the same structure</li>
+<li><strong>Robust error handling</strong>: Three-level error reporting</li>
+<li><strong>Memory safety</strong>: Careful resource management</li>
+<li><strong>FIPS support</strong>: Separate contexts for compliance</li>
+<li><strong>Performance</strong>: Direct native calls, context reuse, streaming operations</li>
+<li><strong>Maintainability</strong>: Well-documented, consistent coding style</li>
+
+<p>The implementation serves as a reference for building JNI bridges to native cryptographic libraries.</p>
+
+</div>
+</body>
+</html>

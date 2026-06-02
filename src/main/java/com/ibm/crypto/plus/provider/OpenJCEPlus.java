@@ -9,10 +9,17 @@
 package com.ibm.crypto.plus.provider;
 
 import com.ibm.crypto.plus.provider.ock.NativeOCKAdapterNonFIPS;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.StringReader;
+import java.security.AccessController;
+import java.security.InvalidParameterException;
 import java.security.NoSuchAlgorithmException;
+import java.security.PrivilegedExceptionAction;
 import java.security.Provider;
 import java.security.ProviderException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public final class OpenJCEPlus extends OpenJCEPlusProvider {
@@ -74,6 +81,7 @@ public final class OpenJCEPlus extends OpenJCEPlusProvider {
 
     private static boolean ockInitialized = false;
     private static Map<String, String> attrs;
+    private String selectedBackend = "OCK";  // Default backend
 
     public OpenJCEPlus() {
         super("OpenJCEPlus", info);
@@ -100,6 +108,84 @@ public final class OpenJCEPlus extends OpenJCEPlusProvider {
                 t.printStackTrace(System.out);
             }
         }
+    }
+
+    /**
+     * Constructor that accepts a ProviderServiceReader for configuration-based initialization.
+     * This allows creating a provider instance with custom service definitions and backend selection.
+     *
+     * @param config the ProviderServiceReader containing configuration
+     * @throws IOException if an error occurs reading the configuration
+     */
+    public OpenJCEPlus(ProviderServiceReader config) throws IOException {
+        super("OpenJCEPlus-" + config.getName(), config.getDesc());
+
+        if (debug != null) {
+            debug.println("New OpenJCEPlus instance with config");
+        }
+
+        // Get backend selection from config (already parsed in constructor)
+        selectedBackend = config.getBackend();
+        if (selectedBackend == null || selectedBackend.trim().isEmpty()) {
+            selectedBackend = "OCK";  // Default to OCK
+        }
+
+        if (debug != null) {
+            debug.println("Selected backend: " + selectedBackend);
+        }
+
+        final OpenJCEPlusProvider jce = this;
+
+        // Read and register services from configuration
+        List<ProviderServiceReader.ServiceDefinition> services = config.readServices();
+        for (ProviderServiceReader.ServiceDefinition service : services) {
+            String[] aliasArray = service.getAliases().toArray(new String[0]);
+            putService(new OpenJCEPlusService(jce, service.getType(),
+                                             service.getAlgorithm(),
+                                             service.getClassName(),
+                                             aliasArray));
+        }
+
+        if (instance == null) {
+            instance = this;
+        }
+    }
+
+    /**
+     * Creates a new OpenJCEPlus provider instance configured from a file.
+     * This method allows dynamic provider configuration including backend selection.
+     *
+     * @param configFile path to the configuration file
+     * @return a new configured OpenJCEPlus provider instance
+     * @throws InvalidParameterException if configuration fails
+     */
+    @Override
+    public Provider configure(String configFile) throws InvalidParameterException {
+        try {
+            return AccessController.doPrivileged(new PrivilegedExceptionAction<Provider>() {
+                @Override
+                public Provider run() throws Exception {
+                    return new OpenJCEPlus(new ProviderServiceReader(configFile));
+                }
+            });
+        } catch (java.security.PrivilegedActionException pae) {
+            InvalidParameterException ipe =
+                new InvalidParameterException("Error configuring OpenJCEPlus provider");
+            ipe.initCause(pae.getException());
+            throw ipe;
+        } catch (Exception e) {
+            throw new InvalidParameterException("Error configuring OpenJCEPlus provider: " +
+                                               e.getMessage());
+        }
+    }
+
+    /**
+     * Gets the currently selected backend for this provider instance.
+     *
+     * @return the backend name ("OCK" or "OpenSSL")
+     */
+    public String getSelectedBackend() {
+        return selectedBackend;
     }
 
     private void registerAlgorithms(Provider jce) {
